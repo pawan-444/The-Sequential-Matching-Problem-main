@@ -1,71 +1,126 @@
 # Round 1 Research Note — The Sequential Matching Problem
 
-**Approach:** Constraint-first sequential allocation with targeted clarification  
-**Data:** Public synthetic release 1.0.0  
-**Status:** Proposed method and initial implementation plan; no private-world results are claimed.
+**Proposed approach:** Constraint-first sequential allocation with targeted clarification  
+**Release:** Public synthetic release 1.0.0  
+**Status:** Preliminary implementation and evaluation; findings are limited to the runs reported below.
 
 ## 1. Problem interpretation
 
-The policy makes two decisions each simulated day: which unanswered fields to clarify under a limited budget, and which available pairs to introduce. The policy only sees arrived members, currently observable profile fields, field-status indicators, past introductions, feedback whose observation time has arrived, and policy-owned memory. It must not infer or use future arrivals, hidden simulator traits, private response propensities, or unobserved future outcomes.
+The policy makes two sequential decisions on each simulated day:
 
-An introduction is valid only when reciprocal hard constraints are satisfied, both people are available, the pair has not previously been introduced, and neither person is used twice in the same batch. Missing hard information is not treated as approval. A known hard-constraint failure makes a pair infeasible; unresolved hard information requires clarification.
+1. **Clarification:** choose which unknown profile fields to ask about under a limited daily budget.
+2. **Allocation:** choose a batch of introductions among currently available members.
 
-The primary objective is mutual second-meeting intention (MSMI) per 100 arrived members. Coverage, mutual acceptance, clarification cost, and inference time are relevant secondary metrics/tie-breakers. Missing or delayed feedback must not be treated automatically as a negative outcome.
+The policy must act only on information available in the current request and its own persistent memory. It must not use future arrivals, hidden simulator traits, private response propensities, or outcomes that have not yet become observable.
 
-## 2. Hypothesis
+An introduction is valid only when the official reciprocal hard-constraint check returns `feasible`, both members are available, the pair has not previously been introduced, and neither member is used more than once in the same batch. A known hard-constraint conflict makes a pair infeasible; missing hard information requires clarification rather than being treated as approval. A soft compatibility score must never override hard feasibility.
 
-A policy that (1) applies the official reciprocal feasibility function, (2) spends clarification budget on members whose missing hard constraints affect many plausible candidate edges, and (3) allocates non-overlapping introductions using compatibility-weighted edges with local allocation improvements will outperform simple greedy matching on at least some scenarios, while strict feasibility and budget checks preserve episode validity. Benefits are expected to be most relevant when profiles are incomplete; performance under sparse, delayed, shifted, and drifting conditions must be measured rather than assumed.
+The primary objective is **mutual second-meeting intention (MSMI) per 100 arrived members**. Coverage and mutual acceptance are useful secondary outcomes; clarification cost and inference time also matter. Missing or delayed feedback is not automatically a negative outcome.
 
-## 3. Candidate allocation method
+## 2. Research hypothesis
 
-1. Consider only currently available members and exclude previously introduced pairs.
-2. Call the release's `eligibility(a, b)` function; retain only `feasible` edges. Never override an infeasible or unresolved hard constraint with a soft score.
-3. Score edges using observable soft-field agreements. The initial heuristic emphasizes `relationship_goal`, `relationship_pace`, `lifestyle`, and `conversations`; other soft fields receive smaller tie-breaking weights. Unknown values contribute no positive or negative evidence and are not imputed as mismatches.
-4. Seed a non-overlapping batch by descending edge utility with stable tie-breaking.
-5. Attempt local two-edge replacements on the same four members when they increase total edge utility. This is a deterministic local-improvement heuristic, not an exact maximum-weight matching solver; a later ablation should determine whether a stronger optimizer is worth its complexity.
+Our hypothesis is that a constraint-first policy that combines (a) official reciprocal feasibility checks, (b) targeted clarification of missing hard constraints, and (c) compatibility-weighted non-overlapping allocation can improve allocation quality or coverage relative to simple baselines, especially when profiles are incomplete.
 
-The weights are initial engineering hypotheses, not fitted parameters and not real-world relationship estimates. The simulator's outcome mechanism is synthetic and scenario-dependent, so the weights must be tested across scenario families.
+This is a hypothesis to test, not an established result. In particular, higher mutual acceptance or coverage does not necessarily imply higher MSMI. The policy should therefore be selected primarily on the benchmark's MSMI objective, with other metrics used to understand trade-offs.
 
-## 4. Clarification policy
+## 3. Proposed policy
 
-The daily clarification budget is 12 units. A `constraints` bundle costs 3 units and named soft-field asks cost 1. The first implementation ranks available members with unresolved, non-declined hard fields by the number of candidate edges currently marked `needs_clarification`, with a small preference for members who also have feasible alternatives. It asks up to four high-priority hard bundles first. If budget remains, it asks primary soft fields for members with feasible alternatives, prioritizing members with more such alternatives.
+### 3.1 Feasibility-first candidate graph
 
-Declined answers remain unknown and are never silently inferred. The policy does not repeatedly ask a hard bundle when a hard field has already been declined. This heuristic is intentionally simple; a more formal value-of-information score can be evaluated after a valid baseline is established.
+For each decision, consider only currently available members and exclude previously introduced pairs. Use the release's `eligibility(a, b)` function to classify candidate pairs. Retain only edges marked `feasible` for allocation. Pairs marked `needs_clarification` may inform question selection, but must not be introduced until the official checker returns `feasible`.
 
-## 5. Missingness and delayed feedback
+This is important because the public release is highly constrained: in a pairwise scan of the public profile snapshot, only about 0.5% of possible pairs were immediately feasible, while about 12.9% required clarification. These figures describe that public snapshot and should not be assumed to hold in every generated evaluation episode.
 
-`null` means unknown, not zero or false. `field_status` distinguishes observed, not asked, and declined. The policy makes decisions only from the current request. Historical introduction records with null propensity do not support inverse-propensity correction, and observed historical outcomes may be selection-biased. Therefore, the primary comparison should use controlled simulator rollouts with the same seeds and scenario variants, rather than treating historical feedback as an unbiased offline test set.
+### 3.2 Compatibility scoring
 
-Feedback is used only after it becomes observable. A no-response event is not interpreted as a rejection. MSMI is sparse and depends on downstream events, so small differences in a small number of episodes should not be treated as conclusive.
+The initial heuristic scores feasible pairs using observable soft-field agreement. It emphasizes `relationship_goal`, `relationship_pace`, `lifestyle`, and `conversations`, with smaller tie-breaking weights for other available soft fields. The current weights are engineering hypotheses, not fitted parameters or real-world relationship estimates.
 
-## 6. Evaluation plan and baselines
+Unknown values are treated as unknown: they are not silently imputed as mismatches or as positive evidence. The heuristic uses deterministic tie-breaking to make results reproducible.
 
-Compare the custom policy against the supplied:
+### 3.3 Non-overlapping allocation
 
-- greedy baseline;
-- no-clarification baseline;
-- random-feasible baseline.
+The policy first builds a non-overlapping batch by considering high-utility feasible edges. It then attempts local two-edge replacements involving the same four members when the replacement increases total edge utility.
 
-Use identical public evaluation seeds and all six scenario families: `development`, `sparse`, `cold_start`, `delayed`, `shift`, and `drift`. Report per-scenario MSMI per 100 arrived members, coverage, mutual acceptances per 100, clarification cost, waiting-time distribution, missing feedback, and inference time. Repeat across multiple seeds before making claims.
+This is a local-improvement heuristic, **not an exact maximum-weight matching solver**. A future ablation should test whether a stronger global optimizer improves MSMI enough to justify its added complexity and runtime.
 
-## 7. Planned ablations
+## 4. Clarification strategy
 
-1. Greedy edge allocation versus the local-improvement allocation.
-2. No asks versus supplied baseline asks versus targeted asks.
-3. Primary four-field score versus the full weighted soft-field score.
-4. Remove the local two-edge improvement step.
-5. Compare performance separately across sparse, cold-start, delayed, shift, and drift scenarios.
+The daily clarification budget is 12 units. A `constraints` bundle costs 3 units; a named soft-field question costs 1 unit. The initial policy prioritizes available members with unresolved, non-declined hard fields, using the number of currently uncertain candidate edges as a simple estimate of how broadly an answer could help. It then uses remaining budget for selected soft fields among members who have feasible alternatives.
+
+The policy avoids repeatedly asking a hard bundle when a hard field has already been declined. A declined answer remains unknown and is not inferred indirectly. This strategy is a practical first heuristic rather than a formal value-of-information solution. Its main risk is that it may spend budget on information that later proves less useful than expected.
+
+## 5. Missingness, feedback, and evaluation validity
+
+The data contract distinguishes observed, not-asked, and declined fields. `null` means unknown, not zero or false. The policy uses only the current observable state and policy-owned memory.
+
+Historical introduction records with null propensity do not support inverse-propensity correction. Historical feedback may also be selection-biased because outcomes are observed only for pairs selected by a prior policy. For that reason, controlled simulator rollouts with matched seeds and scenario variants are the primary comparison method.
+
+Feedback is used only after it becomes observable. No response is not treated as a rejection, and late outcomes are not treated as failures before their observation windows mature. MSMI is sparse, so a difference driven by one or two outcomes in a small set of episodes is not conclusive.
+
+## 6. Baselines and evaluation protocol
+
+The policy is compared with the supplied:
+- **Greedy** baseline;
+- **No-clarification** baseline;
+- **Random-feasible** baseline.
+
+The evaluation covers six scenario variants: `development`, `sparse`, `cold_start`, `delayed`, `shift`, and `drift`. Runs should use the same seeds across methods and report MSMI per 100 arrived members, coverage, mutual acceptances per 100, clarification cost, waiting times, missing feedback, and inference time. Multiple seeds are necessary because the primary outcome is rare and stochastic.
+
+### Preliminary results
+
+The following custom-versus-greedy comparison used seeds **101, 102, and 103** across all six variants (18 episodes per method). All reported episodes were valid.
+
+| Metric | Custom policy | Greedy baseline |
+|---|---:|---:|
+| Primary score: mean scenario MSMI per 100 arrived members | 0.3056 | 0.3889 |
+| Coverage | 37.56% | 37.17% |
+| Mutual acceptances per 100 | 6.36 | 5.50 |
+| Clarification cost | 328.17 | 206.67 |
+| Inference time (seconds) | 21.65 | 17.37 |
+
+In this preliminary matched-seed comparison, the custom policy had slightly higher coverage and more mutual acceptances, but a lower primary score, higher clarification cost, and longer inference time than greedy. Thus, the current evidence does **not** support a claim that the custom policy outperforms greedy overall.
+
+The per-scenario primary scores were:
+
+| Scenario | Custom policy | Greedy baseline |
+|---|---:|---:|
+| Development | 0.3333 | 0.5000 |
+| Sparse | 0.0000 | 0.1667 |
+| Cold start | 0.3333 | 0.1667 |
+| Delayed | 0.5000 | 0.5000 |
+| Shift | 0.3333 | 0.5000 |
+| Drift | 0.3333 | 0.5000 |
+
+The custom policy performed better in the cold-start scenario in these runs, tied greedy in delayed, and performed worse in development, sparse, shift, and drift. This suggests that the clarification/scoring trade-off requires further tuning, particularly under sparse information and distribution shift.
+
+A separate **single-seed** run (seed 101 across all six variants) produced primary scores of 0.4167 for custom, 0.5000 for greedy, 0.3333 for no-clarification, and 0.2500 for random-feasible. This is only a smoke-test comparison, not a robust estimate. No-clarification and random-feasible have not yet been run across the same three-seed set in the results reported here.
+
+## 7. Planned ablations and next experiments
+
+1. **Allocation:** greedy edge selection versus local two-edge improvement; consider exact maximum-weight matching if feasible within runtime constraints.
+2. **Clarification:** no asks versus supplied baseline asks versus targeted asks.
+3. **Scoring:** primary four-field score versus the full weighted soft-field score.
+4. **Question budget:** compare hard-bundle prioritization with a candidate-edge-based value-of-information approximation.
+5. **Robustness:** analyze each of the six scenario families separately and repeat with additional seeds.
+6. **Efficiency:** test whether reduced clarification spend or faster scoring can preserve MSMI.
+
+Ablations should change one component at a time and use matched seeds. The primary selection metric remains MSMI; coverage and acceptance alone are not sufficient to select a winner.
 
 ## 8. Failure cases and limitations
 
-- If few pairs are feasible, coverage can remain low even with good allocation.
-- Clarification may not resolve fields explicitly declined by a member.
-- A myopic question policy can spend budget on edges that become irrelevant after other answers arrive.
-- Greedy initialization plus local two-edge changes is not guaranteed to find the global optimum.
-- Static heuristic weights may fail when scenario weights shift or drift.
-- Delayed and missing feedback makes online learning noisy and potentially biased.
-- The public data and simulator are synthetic; results would not establish real-world matching quality or safety.
+- Very sparse feasible graphs can limit coverage regardless of scoring quality.
+- A declined field cannot be resolved by asking again or by inferring the answer.
+- A myopic clarification heuristic can spend budget on information that later becomes irrelevant.
+- Local two-edge improvement is not guaranteed to find a global optimum.
+- Static heuristic weights may not adapt to shifted or drifting outcome patterns.
+- Delayed and missing feedback make online adaptation noisy and can introduce selection bias.
+- MSMI is a sparse downstream outcome; small episode counts have high uncertainty.
+- The data and simulator are synthetic. These results do not establish real-world matching quality, fairness, or safety.
 
-## 9. Reproducibility and next steps
+## 9. Reproducibility and immediate next steps
 
-The implementation uses Python's standard library and the provided release kit. First validate the policy protocol and constraints, then run a single development seed as a smoke test, then run matched-seed baseline comparisons and ablations. Save machine-readable results and report scenario-level results; do not report unrun experiments as findings. Before final submission, run the supplied unit tests, data verification, and Docker evaluation, and pin the submitted source by an immutable commit or archive checksum.
+The implementation uses the provided release kit and Python standard library. The local checks completed successfully: **26 unit tests passed**, and dataset verification reported 2,000 members across 71 files. The evaluation commands completed for the preliminary runs summarized above.
+
+Next, run the no-clarification and random-feasible baselines across the same three seeds, inspect sparse-scenario failure cases, and perform the planned ablations. Before final submission, rerun the required tests and data verification, build and test the Docker image, save machine-readable episode results, and pin the submitted source by an immutable commit SHA or archive checksum.
+
+**Conclusion:** The constraint-first design is valid and promising as a structured starting point, but current evidence shows a trade-off rather than a win: the custom policy increases acceptance and coverage slightly while using more clarification budget and achieving a lower primary score than greedy. The next iteration should focus on improving outcome quality per unit of clarification cost, not merely increasing the number of introductions.
